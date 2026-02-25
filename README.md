@@ -2,7 +2,7 @@
 
 A truecolor statusline for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) that shows your context window usage as a segmented bar — so you always know how much room you have left.
 
-<img width="587" height="236" alt="Frame 21" src="https://github.com/user-attachments/assets/b18ff3c8-5ad4-476e-9a5d-dc4aa6806e79" />
+<img width="587" height="236" alt="Frame 21" src="https://github.com/user-attachments/assets/0e19264d-3bb6-4abc-933f-19f9108c22bf" />
 
 
 ## Install
