@@ -17,12 +17,6 @@ Then restart Claude Code.
 
 A two-line status bar at the bottom of every Claude Code session:
 
-```
-███████▊████▊█▊███▊████████████████████▊█████▊  20k/200k ($8.44)  Claude 4.6 Opus  [main]
-
-tools-12k mcp-4k chat-8k (system-5k, schemas-11k, skills-3k)
-```
-
 **Segments** (left to right):
 
 | Color | Segment | What it tracks |
