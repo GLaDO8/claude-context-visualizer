@@ -13,6 +13,16 @@ curl -fsSL https://raw.githubusercontent.com/GLaDO8/claude-context-visualizer/ma
 
 Then restart Claude Code.
 
+## Update
+
+To update to the latest version, re-run the install command:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/GLaDO8/claude-context-visualizer/main/install.sh | bash
+```
+
+This overwrites the scripts with the latest version while preserving your `settings.json` configuration.
+
 ## What You Get
 
 A two-line status bar at the bottom of every Claude Code session:
