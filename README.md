@@ -1,6 +1,6 @@
 # Claude Context Visualizer
 
-A truecolor statusline for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) that shows your context window usage as a segmented bar — so you always know how much room you have left.
+A statusline for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) that shows your context window usage as a segmented bar — so you always know how much room you have left.
 
 <img width="full" height="full" alt="Frame 21" src="https://github.com/user-attachments/assets/298c0ae0-afeb-4d99-8257-18bc920f5837" />
 
@@ -53,7 +53,7 @@ The tracker uses `lockf` (macOS) or `flock` (Linux) for concurrency-safe writes,
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (any version with `statusLine` + `hooks` support)
 - `jq` — JSON processor (`brew install jq` / `apt install jq`)
 - macOS or Linux
-- A truecolor terminal (Ghostty, iTerm2, WezTerm, Kitty, Alacritty, etc.)
+- Any terminal — auto-detects color support (truecolor, 256-color, or basic 16-color)
 
 ## Uninstall
 
