@@ -129,19 +129,54 @@ t_chat=$((msg_budget - tracked))
 free=$((context_size - tokens_used - buffer))
 [ $free -lt 0 ] && free=0
 
-# ─── Colors (all truecolor) ─────────────────────────────
+# ─── Detect terminal color support ────────────────────────
+# Tier 1: truecolor (24-bit RGB)  — COLORTERM=truecolor|24bit
+# Tier 2: 256 colors              — TERM contains "256color"
+# Tier 3: basic (8/16 colors)     — everything else (Raspberry Pi, linux console, etc.)
+_cm=basic
+case "${COLORTERM-}" in
+  truecolor|24bit) _cm=truecolor ;;
+  *) case "${TERM-}" in *256color*) _cm=256 ;; esac ;;
+esac
+
+# ─── Colors (adaptive to terminal capability) ────────────
 reset="\033[0m"
-c_results="\033[38;2;252;102;177m"  # #FC66B1 — pink (tool+agent results)
-c_mcp="\033[38;2;55;243;186m"       # #37F3BA — teal (MCP results)
-c_chat="\033[38;2;202;255;68m"      # #CAFF44 — green (chat)
-c_fixed="\033[38;2;153;153;153m"    # #999999 — grey (overhead + stats text)
-c_free="\033[38;2;57;57;57m"        # #393939 — dark grey (free space)
-c_buf="\033[38;2;34;34;34m"         # #222222 — near-black (buffer)
-c_orange="\033[38;2;243;155;55m"    # #F39B37 — orange (git branch)
-c_model="\033[3;38;2;255;96;68m"   # #FF6044 — red-orange italic (model name)
-c_bold="\033[1m"                    # bold
-c_warn_y="\033[33m"                 # yellow
-c_warn_r="\033[31m"                 # red
+c_bold="\033[1m"
+c_warn_y="\033[33m"                 # yellow (works on all terminals)
+c_warn_r="\033[31m"                 # red    (works on all terminals)
+
+case $_cm in
+  truecolor)
+    c_results="\033[38;2;252;102;177m"  # #FC66B1 — pink
+    c_mcp="\033[38;2;55;243;186m"       # #37F3BA — teal
+    c_chat="\033[38;2;202;255;68m"      # #CAFF44 — green
+    c_fixed="\033[38;2;153;153;153m"    # #999999 — grey
+    c_free="\033[38;2;57;57;57m"        # #393939 — dark grey
+    c_buf="\033[38;2;34;34;34m"         # #222222 — near-black
+    c_orange="\033[38;2;243;155;55m"    # #F39B37 — orange
+    c_model="\033[3;38;2;255;96;68m"   # #FF6044 — red-orange italic
+    ;;
+  256)
+    c_results="\033[38;5;205m"          # closest to #FC66B1
+    c_mcp="\033[38;5;49m"               # closest to #37F3BA
+    c_chat="\033[38;5;154m"             # closest to #CAFF44
+    c_fixed="\033[38;5;245m"            # closest to #999999
+    c_free="\033[38;5;237m"             # closest to #393939
+    c_buf="\033[38;5;235m"              # closest to #222222
+    c_orange="\033[38;5;214m"           # closest to #F39B37
+    c_model="\033[3;38;5;202m"          # closest to #FF6044, italic
+    ;;
+  basic)
+    c_results="\033[95m"                # bright magenta
+    c_mcp="\033[96m"                    # bright cyan
+    c_chat="\033[92m"                   # bright green
+    c_fixed="\033[37m"                  # white (light grey)
+    c_free="\033[90m"                   # bright black (dark grey)
+    c_buf="\033[90m"                    # bright black (dark grey)
+    c_orange="\033[93m"                 # bright yellow
+    c_model="\033[3;91m"               # bright red, italic
+    ;;
+esac
 
 # ─── Build 36-char stacked bar ──────────────────────────
 bar_len=36
