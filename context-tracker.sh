@@ -1,9 +1,9 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════
-# Context Tracker — PostToolUse hook (v4.2)
+# Context Tracker — PostToolUse hook (v5.0)
 # ═══════════════════════════════════════════════════════════
 # Estimates token consumption per tool category by measuring
-# the size of tool inputs and results passing through hooks.
+# tool_input + tool_response sizes (the context-relevant parts).
 #
 # Categories:
 #   agents — Task (subagent) results
@@ -13,7 +13,7 @@
 # Writes running totals to /tmp/claude-context-tracker/<session>.json
 # which the statusline reads for the breakdown display.
 #
-# Performance: 2 direct forks (1× jq metadata, 1× lockf → sh → jq)
+# Performance: 2 direct forks (1× jq metadata+sizing, 1× lockf → sh → jq)
 # Security: all jq interpolation uses @sh/--arg (no shell injection)
 # Concurrency: lockf (macOS) / flock (Linux) prevents read-modify-write races
 
@@ -27,16 +27,18 @@ else
 fi
 
 IFS= read -r -d '' input
-total_chars=${#input}
 
-# Extract metadata (single jq call, @sh-quoted for safety)
+# Extract metadata + measure only context-relevant content (single jq call)
+# tool_input and tool_response are what goes into the context window;
+# hook metadata (session_id, cwd, transcript_path, etc.) does not.
 eval "$(jq -r '
   @sh "session_id=\(.session_id // "default")",
-  @sh "tool_name=\(.tool_name // "unknown")"
+  @sh "tool_name=\(.tool_name // "unknown")",
+  @sh "content_chars=\((.tool_input | tostring | length) + (.tool_response | tostring | length))"
 ' <<< "$input" 2>/dev/null)" || exit 0
 
-# Estimate tokens: ~4 characters per token, subtract JSON envelope overhead
-est=$(( (total_chars > 300) ? (total_chars - 300) / 4 : 0 ))
+# Estimate tokens: ~4 characters per token
+est=$((content_chars / 4))
 
 # Categorize tool into context buckets
 case "$tool_name" in

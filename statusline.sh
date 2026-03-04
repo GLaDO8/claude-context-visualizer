@@ -1,6 +1,6 @@
 #!/bin/bash
 # ═══════════════════════════════════════════════════════════
-# Claude Code Context Window Visualizer — v4.2
+# Claude Code Context Window Visualizer — v5.0
 # ═══════════════════════════════════════════════════════════
 #
 # Bar: 36 chars, █ body + ▊ cap per segment (visible gaps) — results(pink) mcp(teal) chat(green) fixed(grey) free(dark) buffer(black)
@@ -15,22 +15,35 @@ eval "$(jq -r '
   @sh "session_id=\(.session_id // "default")",
   @sh "context_size=\(.context_window.context_window_size // 200000)",
   @sh "used_pct=\(.context_window.used_percentage // 0)",
+  @sh "input_tokens=\(.context_window.current_usage.input_tokens // 0)",
+  @sh "cache_creation=\(.context_window.current_usage.cache_creation_input_tokens // 0)",
+  @sh "cache_read=\(.context_window.current_usage.cache_read_input_tokens // 0)",
   @sh "total_cost=\(.cost.total_cost_usd // 0)"
 ' <<< "$input" 2>/dev/null)"
 
 # Fallback defaults if jq eval failed
 : "${model_name:=Unknown}" "${session_id:=default}"
 : "${context_size:=200000}" "${used_pct:=0}" "${total_cost:=0}"
+: "${input_tokens:=0}" "${cache_creation:=0}" "${cache_read:=0}"
 
 # Guard against zero/negative context_size (prevents division-by-zero)
 [ "$context_size" -le 0 ] 2>/dev/null && context_size=200000
 
-# Truncate float used_pct (e.g. 85.5 → 85) to prevent bash arithmetic crash
+# Truncate floats to prevent bash arithmetic crash
 used_pct=${used_pct%.*}
+input_tokens=${input_tokens%.*}
+cache_creation=${cache_creation%.*}
+cache_read=${cache_read%.*}
 
-# Derived values
+# Derived values — prefer exact input_tokens over percentage-based estimate
 context_k=$((context_size / 1000))
-tokens_used=$((used_pct * context_size / 100))
+exact_tokens=$((input_tokens + cache_creation + cache_read))
+if [ $exact_tokens -gt 0 ]; then
+  tokens_used=$exact_tokens
+  used_pct=$((tokens_used * 100 / context_size))
+else
+  tokens_used=$((used_pct * context_size / 100))
+fi
 
 # ─── Git branch detection ─────────────────────────────
 git_branch=""
@@ -38,27 +51,38 @@ if [ -n "$cwd" ] && [ -e "$cwd/.git" ]; then
   git_branch=$(git -C "$cwd" --no-optional-locks rev-parse --abbrev-ref HEAD 2>/dev/null)
 fi
 
-# ─── Fixed overhead (single unified segment) ────────────
-# These are always present — system prompt, tool/agent/skill
-# definitions, MCP schemas, memory files. They never go away,
-# not even after /clear.
+# ─── Fixed overhead (auto-calibrated + dynamic measurement) ─
+# Overhead = everything that survives /clear: system prompt, tool
+# schemas, agent defs, skills, memory files. With ToolSearch now
+# standard, deferred MCP tool schemas are NOT in the context window
+# (only their names in the ToolSearch description).
 #
-# Calibrated from /context:
-#   System prompt:    4,200
-#   Custom agents:    1,700
-#   System tools:    10,100  (built-in + MCP + deferred tools loaded via ToolSearch)
-#   Skills:           3,200
-#   Memory (CLAUDE.md): measured
-overhead_base=$((4200 + 1700 + 10100 + 3200))  # 19,200
-overhead_memory=0
+# Strategy: auto-calibrate total overhead on first render of a
+# session (before tools run), then dynamically measure sub-components
+# (skills, memory) for the legend breakdown.
 
-# Measure CLAUDE.md files (global + project) → tokens ≈ chars/4
+dir="/tmp/claude-context-tracker"
+[ -d "$dir" ] || { mkdir -p "$dir" && chmod 700 "$dir"; } 2>/dev/null
+overhead_file="$dir/${session_id}.overhead"
+tracker="/tmp/claude-context-tracker/${session_id}.json"
+overhead_fallback=25000
+
+# ── Dynamic: measure memory files (CLAUDE.md + rules) ──
+overhead_memory=0
 for f in "$HOME/.claude/CLAUDE.md" "$HOME/.claude/claude.md"; do
   if [ -f "$f" ]; then
     _content=$(<"$f")
     overhead_memory=$((overhead_memory + ${#_content} / 4))
   fi
 done
+# Global rules
+for f in "$HOME/.claude/rules"/*.md; do
+  if [ -f "$f" ]; then
+    _content=$(<"$f")
+    overhead_memory=$((overhead_memory + ${#_content} / 4))
+  fi
+done
+# Project-level CLAUDE.md + rules
 if [ -n "$cwd" ]; then
   for f in "$cwd/CLAUDE.md" "$cwd/.claude/CLAUDE.md"; do
     if [ -f "$f" ]; then
@@ -66,20 +90,69 @@ if [ -n "$cwd" ]; then
       overhead_memory=$((overhead_memory + ${#_content} / 4))
     fi
   done
+  for f in "$cwd/.claude/rules"/*.md; do
+    if [ -f "$f" ]; then
+      _content=$(<"$f")
+      overhead_memory=$((overhead_memory + ${#_content} / 4))
+    fi
+  done
 fi
 
-overhead=$((overhead_base + overhead_memory))
+# ── Dynamic: measure skills (SKILL.md name+description) ──
+overhead_skills=0
+_skills_chars=0
+for f in "$HOME/.claude/skills"/*/SKILL.md "$HOME/.claude/plugins/cache"/*/*/skills/*/SKILL.md; do
+  [ -f "$f" ] || continue
+  # Read only the frontmatter (between --- delimiters), extract name + description
+  _in_fm=0; _name=""; _desc=""
+  while IFS= read -r _line; do
+    case "$_in_fm" in
+      0) [ "$_line" = "---" ] && _in_fm=1 ;;
+      1) case "$_line" in
+           "---") break ;;
+           name:*) _name="${_line#name: }" ;;
+           description:*) _desc="${_line#description: }" ;;
+         esac ;;
+    esac
+  done < "$f"
+  _skills_chars=$((_skills_chars + ${#_name} + ${#_desc}))
+done
+overhead_skills=$((_skills_chars / 4))
 
-# Named sub-components (for legend breakdown)
-overhead_system=$((4200 + overhead_memory))  # system prompt + CLAUDE.md
-overhead_schemas=$((1700 + 10100))           # agent defs + tool schemas (11800)
-overhead_skills=3200
+# ── Auto-calibrate total overhead on first render ──
+if [ -f "$overhead_file" ]; then
+  overhead=$(<"$overhead_file")
+  overhead=${overhead%.*}
+  # Sanity check stored value
+  [ "$overhead" -ge 15000 ] 2>/dev/null && [ "$overhead" -le 50000 ] 2>/dev/null || overhead=$overhead_fallback
+else
+  # First render: check if tracker exists with calls > 0
+  _calls=0
+  if [ -f "$tracker" ]; then
+    _calls=$(jq -r '.calls // 0' "$tracker" 2>/dev/null)
+    _calls=${_calls:-0}
+  fi
+  if [ "$_calls" -eq 0 ] && [ $tokens_used -gt 0 ]; then
+    # No tools called yet — tokens_used ≈ overhead + initial chat (~1500 tokens)
+    overhead=$((tokens_used - 1500))
+    # Clamp to reasonable range
+    [ $overhead -lt 15000 ] && overhead=15000
+    [ $overhead -gt 50000 ] && overhead=50000
+    printf '%d\n' "$overhead" > "$overhead_file"
+  else
+    overhead=$overhead_fallback
+  fi
+fi
+
+# ── Legend sub-components ──
+# system = calibrated total minus the directly-measured parts
+overhead_system=$((overhead - overhead_memory - overhead_skills))
+[ $overhead_system -lt 0 ] && overhead_system=0
 
 # Autocompact buffer: 16.5% of context_size (reserved, unusable)
 buffer=$((context_size * 165 / 1000))
 
 # ─── Read tracker data ──────────────────────────────────
-tracker="/tmp/claude-context-tracker/${session_id}.json"
 t_agents=0; t_tools=0; t_mcp=0
 if [ -f "$tracker" ]; then
   eval "$(jq -r '
@@ -228,5 +301,5 @@ legend=""
 [ ${bar_chars[0]} -gt 0 ] && legend="${legend}${c_results}tools-$((t_results / 1000))k${reset} "
 [ ${bar_chars[1]} -gt 0 ] && legend="${legend}${c_mcp}mcp-$((t_mcp / 1000))k${reset} "
 [ ${bar_chars[2]} -gt 0 ] && legend="${legend}${c_chat}chat-$((t_chat / 1000))k${reset} "
-legend="${legend}${c_fixed}(system-$((overhead_system / 1000))k, schemas-$((overhead_schemas / 1000))k, skills-$((overhead_skills / 1000))k)${reset}"
+legend="${legend}${c_fixed}(system-$((overhead_system / 1000))k, skills-$((overhead_skills / 1000))k, memory-$((overhead_memory / 1000))k)${reset}"
 printf "\n\n%b" "$legend"
